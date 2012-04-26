@@ -104,7 +104,7 @@ class GitConnector(Component):
             if not path:
 	    	path = '/'
 	    path = path[1:]
-	    if rev and (int(with_rev) != 0 or str(with_rev).lower() == 'True'):
+	    if with_rev and (int(with_rev) != 0 or str(with_rev).lower() == 'True'):
 	    	with_rev = True
 	    else:
 	    	with_rev = False
