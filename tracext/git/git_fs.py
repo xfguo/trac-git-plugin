@@ -12,12 +12,14 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import re
 from trac.core import *
-from trac.util import TracError, shorten_line
+from trac.util import TracError, shorten_line, content_disposition
 from trac.util.datefmt import FixedOffset, to_timestamp, format_datetime
 from trac.util.text import to_unicode
 from trac.versioncontrol.api import \
     Changeset, Node, Repository, IRepositoryConnector, NoSuchChangeset, NoSuchNode
+from trac.web import IRequestHandler, RequestDone
 from trac.wiki import IWikiSyntaxProvider
 from trac.versioncontrol.cache import CachedRepository
 from trac.versioncontrol.web_ui import IPropertyRenderer
@@ -28,6 +30,8 @@ from trac.web.chrome import Chrome
 class CachedRepository2(CachedRepository):
         def short_rev(self, path):
                 return self.repos.short_rev(path)
+        def get_snapshot(self, rev, path, format, prefix):
+		return self.repos.get_snapshot(rev, path, format, prefix)
 
 from genshi.builder import tag
 from genshi.core import Markup, escape
@@ -59,7 +63,7 @@ def _parse_user_time(s):
         return (user,time)
 
 class GitConnector(Component):
-        implements(IRepositoryConnector, IWikiSyntaxProvider, IPropertyRenderer)
+        implements(IRepositoryConnector, IWikiSyntaxProvider, IPropertyRenderer, IRequestHandler)
 
         def __init__(self):
                 self._version = None
@@ -86,8 +90,40 @@ class GitConnector(Component):
                         return tag.a(label, class_="missing changeset",
                                      href=formatter.href.changeset(sha),
                                      title=unicode(e), rel="nofollow")
+	# IRequestHandler methods
+        def match_request(self, req):
+            match = re.match(r'/(snapshot)(/.*)?$', req.path_info)
+            return match
+        def process_request(self, req):
+	    rev = req.args.get('rev')
+	    path = req.args.get('path')
+	    filename = req.args.get('filename')
+	    with_rev = req.args.get('with_rev')
+	    if not rev:
+	    	rev = 'HEAD'
+            if not path:
+	    	path = '/'
+	    path = path[1:]
+	    if rev and (int(with_rev) != 0 or str(with_rev).lower() == 'True'):
+	    	with_rev = True
+	    else:
+	    	with_rev = False
 
-        #######################
+            if not filename:
+		    filename = 'snapshot-%s' % str(rev)[:7]
+            elif with_rev:
+	            filename += '-%s' % str(rev)[:7]
+
+            req.send_response(200)
+            req.send_header('Content-Type', 'application/zip')
+            req.send_header('Content-Disposition',
+                            content_disposition('inline', filename + '.zip'))
+            content = self.env.get_repository().get_snapshot(rev, path, 'zip', filename)
+            req.send_header("Content-Length", len(content))
+            req.write(content)        
+
+            raise RequestDone
+	#######################
         # IPropertyRenderer
 
         # relied upon by GitChangeset
@@ -273,6 +309,8 @@ class GitRepository(Repository):
                         revs = set(self.git.all_revs()) - revs
                         for rev in revs:
                                 rev_callback(rev)
+        def get_snapshot(self, rev, path, format, prefix):
+		return self.git.archive(rev, path, format, prefix)
 
 class GitNode(Node):
         def __init__(self, git, path, rev, log, ls_tree_info=None):
