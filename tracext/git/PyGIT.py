@@ -869,6 +869,10 @@ class Storage(object):
         # handle left-over chg entry
         if chg:
             yield __chg_tuple()
+        
+    def archive(self, rev, path="", format='zip', prefix=''):
+        return self.repo.archive(str(rev), path, '--format=%s' % format, '--prefix=%s/' % prefix);
+	
 
 ############################################################################
 ############################################################################

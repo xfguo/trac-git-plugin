@@ -4,8 +4,10 @@
 #
 # See COPYING for distribution information
 
+import re
 from trac.core import *
 from trac.util import TracError, shorten_line
+from trac.util import content_disposition
 from trac.util.datefmt import FixedOffset, to_timestamp, format_datetime
 from trac.util.text import to_unicode
 from trac.versioncontrol.api import \
@@ -15,7 +17,9 @@ from trac.wiki import IWikiSyntaxProvider
 from trac.versioncontrol.cache import CachedRepository, CachedChangeset
 from trac.versioncontrol.web_ui import IPropertyRenderer
 from trac.config import BoolOption, IntOption, PathOption, Option
+from trac.web import IRequestHandler, RequestDone
 from trac.web.chrome import Chrome
+
 
 from genshi.builder import tag
 
@@ -52,6 +56,10 @@ class GitCachedRepository(CachedRepository):
 
     def get_changeset(self, rev):
         return GitCachedChangeset(self, self.normalize_rev(rev), self.env)
+
+    def get_snapshot(self, rev, path, format, prefix):
+        return self.repos.get_snapshot(rev, path, format, prefix)
+ 
 
 
 class GitCachedChangeset(CachedChangeset):
@@ -101,7 +109,8 @@ def _parse_user_time(s):
     return user, time
 
 class GitConnector(Component):
-    implements(IRepositoryConnector, IWikiSyntaxProvider)
+    implements(IRepositoryConnector, IWikiSyntaxProvider, \
+    		IPropertyRenderer, IRequestHandler)
 
     def __init__(self):
         self._version = None
@@ -251,6 +260,42 @@ class GitConnector(Component):
             self.log.debug("disabled CachedRepository for '%s'" % dir)
 
         return repos
+    #########################
+    # IRequestHandler methods
+    def match_request(self, req):
+        match = re.match(r'/(snapshot)(/.*)?$', req.path_info)
+        return match
+    def process_request(self, req):
+        rev = req.args.get('rev')
+        path = req.args.get('path')
+        filename = req.args.get('filename')
+        with_rev = req.args.get('with_rev')
+	#TODO: load default repo if repo == None
+	repo = req.args.get('repo')
+        if not rev:
+            rev = 'HEAD'
+        if not path:
+            path = '/'
+        path = path[1:]
+        if with_rev and (int(with_rev) != 0 or str(with_rev).lower() == 'True'):
+            with_rev = True
+        else:
+            with_rev = False
+
+        if not filename:
+               filename = 'snapshot-%s' % str(rev)[:7]
+        elif with_rev:
+               filename += '-%s' % str(rev)[:7]
+
+        req.send_response(200)
+        req.send_header('Content-Type', 'application/zip')
+        req.send_header('Content-Disposition',
+                        content_disposition('inline', filename + '.zip'))
+        content = self.env.get_repository(repo).get_snapshot(rev, path, 'zip', filename)
+        req.send_header("Content-Length", len(content))
+        req.write(content)        
+
+        raise RequestDone
 
 
 class CsetPropertyRenderer(Component):
@@ -469,6 +514,8 @@ class GitRepository(Repository):
             revs = set(self.git.all_revs()) - revs
             for rev in revs:
                 rev_callback(rev)
+    def get_snapshot(self, rev, path, format, prefix):
+        return self.git.archive(rev, path, format, prefix)
 
 class GitNode(Node):
     def __init__(self, repos, path, rev, log, ls_tree_info=None, historian=None):
