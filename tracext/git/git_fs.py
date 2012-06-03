@@ -110,7 +110,7 @@ def _parse_user_time(s):
 
 class GitConnector(Component):
     implements(IRepositoryConnector, IWikiSyntaxProvider, \
-    		IPropertyRenderer, IRequestHandler)
+               IRequestHandler)
 
     def __init__(self):
         self._version = None
